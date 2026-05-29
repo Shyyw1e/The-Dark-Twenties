@@ -41,7 +41,6 @@ func (l *slogLogger) With(kv ...any) Logger {
 	}
 }
 
-// New создаёт JSON-логгер на stdout с уровнем level и полем "service".
 func New(level, service string) Logger {
 	level = strings.ToLower(strings.TrimSpace(level))
 
