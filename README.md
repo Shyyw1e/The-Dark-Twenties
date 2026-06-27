@@ -181,7 +181,7 @@ node-agent
 - `billing-service`: инвойсы, платежи, webhooks, payment providers.
 - `device-service`: устройства, revoke, лимиты устройств, статусы.
 - `tunnel-service`: создание и управление туннелями через `TunnelProvider`.
-- `config-service`: генерация конфигов, QR, subscription links.
+- `config-service`: subscription endpoint, генерация конфигов, QR, динамические server profiles.
 - `node-manager-service`: реестр нод, health, capacity, node assignment, failover.
 - `routing-service`: smart routing profiles, RU domain/CIDR rules, rule versions.
 - `notification-service`: Telegram-уведомления, reminders, service messages.
@@ -314,11 +314,11 @@ node-manager-service / tunnel worker
 
 config-service
   consumes: tunnel.provisioned
-  generates config and QR
-  publishes: config.generated
+  generates subscription token, config and QR
+  publishes: subscription_config.generated
 
 notification-service
-  consumes: config.generated
+  consumes: subscription_config.generated
   sends Telegram message
 ```
 
@@ -417,6 +417,7 @@ DLQ должна быть видна в admin/ops интерфейсе, чтоб
 - tunnel provisioning: применение конфига на ноду может быть долгим и падать;
 - subscription expiration: worker публикует команды на отключение туннелей;
 - config generation: QR/config можно генерировать отдельным consumer;
+- subscription refresh: Happ/v2RayTun вручную обновляют подписку через `/sub/{token}`;
 - notifications: Telegram API не должен блокировать billing или provisioning;
 - traffic usage: ноды могут отправлять usage батчами;
 - node health: изменения состояния нод рассылаются заинтересованным сервисам;
@@ -542,6 +543,81 @@ Mode: RU Relay
 - Xray routing rules;
 - plain CIDR/domain lists для внутренних инструментов.
 
+## Config Subscription для Happ/v2RayTun
+
+Happ, v2RayTun и похожие клиенты работают не как "одноразовый config file", а как
+оркестраторы подписки. Пользователь импортирует subscription link, а затем может
+нажать "обновить подписку". В этот момент клиент снова запрашивает backend и
+получает актуальный список серверов.
+
+```text
+Happ/v2RayTun
+  -> GET /sub/{token}
+  -> config-service
+  -> validate token, device, user, subscription
+  -> select healthy node profiles
+  -> render client-specific subscription
+  -> return config
+```
+
+Важно: backend не создает live-туннель при нажатии пользователем "подключить".
+Live-туннель создает клиентское приложение на устройстве. Backend создает и
+обновляет access credentials и subscription config.
+
+Термины:
+
+```text
+Tunnel access = provisioned UUID/key/profile на backend и VPN-нодах
+Client tunnel = live TUN/proxy connection внутри Happ/v2RayTun
+Node session  = наблюдаемая активность на data plane
+```
+
+`config-service` отвечает за:
+
+- стабильный subscription URL;
+- хранение hash от subscription token;
+- проверку active subscription/device;
+- динамический список серверов;
+- client-specific format: Happ, v2RayTun, sing-box, Clash, plain URI list;
+- обновление списка серверов при degraded/down нодах;
+- profile metadata: active_until, device_limit, update interval, server names;
+- запись refresh events для аналитики и anti-abuse.
+
+Когда пользователь нажимает "обновить подписку", config-service может вернуть
+другой набор серверов:
+
+- убрать degraded/down node;
+- добавить новую foreign exit node;
+- добавить RU relay;
+- поменять transport/profile priority;
+- обновить Reality/VLESS параметры;
+- обновить routing profile version.
+
+Ping серверов в Happ/v2RayTun выполняется самим клиентом. Это client-side latency
+test, а не команда backend. Backend должен только не отдавать явно плохие ноды и
+поддерживать собственный health score через `node-manager-service`.
+
+Типы latency:
+
+```text
+client-measured ping = измерение из сети пользователя внутри Happ/v2RayTun
+server-side health   = измерение node-manager/monitoring инфраструктурой
+```
+
+Для UX лучше не делать названия "Обход 1", "Обход 2" полностью случайными при
+каждом refresh. Предпочтительнее стабильные profile slots:
+
+```text
+Обход 1 - Netherlands
+Обход 2 - Germany
+Обход 3 - Finland
+Обход 4 - Fallback TCP
+Обход 5 - RU Relay
+```
+
+Менять конкретную ноду внутри slot стоит при degraded/down состоянии, overload или
+ручном drain.
+
 ## Backend-модули и репозитории
 
 Проект ориентируется на микросервисную архитектуру. На старте можно держать код в
@@ -607,6 +683,10 @@ vpn_nodes
 tunnels
 tunnel_configs
 traffic_usage
+vpn_sessions
+subscription_tokens
+config_profiles
+subscription_refresh_events
 server_health_checks
 routing_rulesets
 admin_audit_log
@@ -649,6 +729,40 @@ tunnel_configs:
   created_at
 ```
 
+Config subscription:
+
+```text
+subscription_tokens:
+  id
+  user_id
+  device_id
+  subscription_id
+  token_hash
+  status
+  client_type
+  format
+  expires_at
+  last_used_at
+  refresh_count
+  revoked_at
+```
+
+Observed sessions:
+
+```text
+vpn_sessions:
+  id
+  tunnel_id
+  node_id
+  protocol
+  source_ip_hash
+  status
+  started_at
+  last_seen_at
+  rx_bytes
+  tx_bytes
+```
+
 ## Жизненный цикл подписки
 
 ```text
@@ -664,10 +778,13 @@ Subscription becomes active
 Backend selects node and protocol
     |
     v
-TunnelProvider creates tunnel
+TunnelProvider creates access credentials
     |
     v
-ConfigService returns QR/config/subscription link
+ConfigService creates subscription token and returns QR/subscription link
+    |
+    v
+Client refreshes /sub/{token} and receives actual server profiles
     |
     v
 Worker checks expiration and limits
@@ -883,6 +1000,21 @@ Outcome: пользователь может получить настоящий
 - Добавить expiration worker, который отключает expired peers.
 - Добавить базовый usage collection.
 
+### Stage 2.5: Config Subscription MVP
+
+Outcome: Happ/v2RayTun могут импортировать стабильную subscription link и
+обновлять список серверов кнопкой refresh.
+
+- Реализовать `config-service`.
+- Создать `subscription_tokens` и хранить только `token_hash`.
+- Реализовать `GET /sub/{token}`.
+- Проверять active token, user, device и subscription.
+- Генерировать plain URI list для VLESS/WireGuard-compatible profiles.
+- Логировать `subscription_refresh_events`.
+- Добавить `client_type` и `format`.
+- Обновлять `last_used_at` и `refresh_count`.
+- Возвращать только healthy/degraded-acceptable node profiles.
+
 ### Stage 3: Telegram Bot MVP
 
 Outcome: первый пользовательский flow полностью работает внутри Telegram.
@@ -946,6 +1078,7 @@ Outcome: anti-blocking профиль доступен без изменения
 - Добавить multi-protocol config на устройство или подписку.
 - Добавить protocol selector в Bot/Mini App.
 - Добавить operational metrics per protocol.
+- Добавить Happ/v2RayTun-specific renderers для subscription profiles.
 
 ### Stage 8: Smart Routing v1
 
@@ -1026,13 +1159,14 @@ Outcome: архитектура может расти без переписыв�
 8. `WireGuardProvider`.
 9. Telegram Bot trial flow.
 10. Config и QR generation.
-11. Expiration worker через RabbitMQ command.
-12. Billing webhooks и payment events.
-13. Admin panel basics.
-14. Node agent.
-15. Xray/VLESS Reality.
-16. Smart routing.
-17. Mini App polish и referrals.
+11. Subscription endpoint `/sub/{token}` для Happ/v2RayTun.
+12. Expiration worker через RabbitMQ command.
+13. Billing webhooks и payment events.
+14. Admin panel basics.
+15. Node agent.
+16. Xray/VLESS Reality.
+17. Smart routing.
+18. Mini App polish и referrals.
 
 ## Главное инженерное правило
 

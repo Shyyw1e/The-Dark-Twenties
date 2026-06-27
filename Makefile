@@ -22,13 +22,15 @@ USER_MIGRATIONS := services/user-service/migrations
 SUBSCRIPTION_MIGRATIONS := services/subscription-service/migrations
 BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
+CONFIG_MIGRATIONS := services/config-service/migrations
 
 .PHONY: help os test goose-install \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
 	migrate-billing-status migrate-billing-up migrate-billing-down migrate-billing-reset \
-	migrate-tunnel-status migrate-tunnel-up migrate-tunnel-down migrate-tunnel-reset
+	migrate-tunnel-status migrate-tunnel-up migrate-tunnel-down migrate-tunnel-reset \
+	migrate-config-status migrate-config-up migrate-config-down migrate-config-reset
 
 help:
 	@echo "The Dark Twenties dev commands"
@@ -49,6 +51,7 @@ help:
 	@echo "  make migrate-subscription-up"
 	@echo "  make migrate-billing-up"
 	@echo "  make migrate-tunnel-up"
+	@echo "  make migrate-config-up"
 
 os:
 	@echo "$(DETECTED_OS)"
@@ -59,11 +62,11 @@ test:
 goose-install:
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
 
-migrate-status: migrate-user-status migrate-subscription-status migrate-billing-status migrate-tunnel-status
+migrate-status: migrate-user-status migrate-subscription-status migrate-billing-status migrate-tunnel-status migrate-config-status
 
-migrate-up: migrate-user-up migrate-subscription-up migrate-billing-up migrate-tunnel-up
+migrate-up: migrate-user-up migrate-subscription-up migrate-billing-up migrate-tunnel-up migrate-config-up
 
-migrate-down: migrate-tunnel-down migrate-billing-down migrate-subscription-down migrate-user-down
+migrate-down: migrate-config-down migrate-tunnel-down migrate-billing-down migrate-subscription-down migrate-user-down
 
 migrate-user-status:
 	$(GOOSE) -dir "$(USER_MIGRATIONS)" postgres "$(USER_SERVICE_POSTGRES_DSN)" status
@@ -112,3 +115,15 @@ migrate-tunnel-down:
 
 migrate-tunnel-reset:
 	$(GOOSE) -dir "$(TUNNEL_MIGRATIONS)" postgres "$(TUNNEL_SERVICE_POSTGRES_DSN)" reset
+
+migrate-config-status:
+	$(GOOSE) -dir "$(CONFIG_MIGRATIONS)" postgres "$(CONFIG_SERVICE_POSTGRES_DSN)" status
+
+migrate-config-up:
+	$(GOOSE) -dir "$(CONFIG_MIGRATIONS)" postgres "$(CONFIG_SERVICE_POSTGRES_DSN)" up
+
+migrate-config-down:
+	$(GOOSE) -dir "$(CONFIG_MIGRATIONS)" postgres "$(CONFIG_SERVICE_POSTGRES_DSN)" down
+
+migrate-config-reset:
+	$(GOOSE) -dir "$(CONFIG_MIGRATIONS)" postgres "$(CONFIG_SERVICE_POSTGRES_DSN)" reset
