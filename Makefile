@@ -24,7 +24,7 @@ BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
 CONFIG_MIGRATIONS := services/config-service/migrations
 
-.PHONY: help os test goose-install run-user-service \
+.PHONY: help os test proto-gen goose-install run-user-service \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
@@ -39,6 +39,7 @@ help:
 	@echo ""
 	@echo "Common:"
 	@echo "  make test"
+	@echo "  make proto-gen"
 	@echo "  make goose-install"
 	@echo "  make run-user-service"
 	@echo ""
@@ -59,6 +60,9 @@ os:
 
 test:
 	go test ./...
+
+proto-gen:
+	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/user/v1/user.proto
 
 goose-install:
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)

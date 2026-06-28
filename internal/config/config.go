@@ -28,6 +28,13 @@ type HTTPConfig struct {
 	ShutdownTimeout   time.Duration
 }
 
+type GRPCConfig struct {
+	Addr               string
+	ShutdownTimeout    time.Duration
+	MaxRecvMessageSize int
+	MaxSendMessageSize int
+}
+
 type PostgresConfig struct {
 	DSN             string
 	MaxOpenConns    int
@@ -67,6 +74,7 @@ type RuntimeConfig struct {
 type Config struct {
 	App      AppConfig
 	HTTP     HTTPConfig
+	GRPC     GRPCConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	RabbitMQ RabbitMQConfig
@@ -93,6 +101,7 @@ func Load(serviceName string) (*Config, error) {
 	cfg := &Config{
 		App:      loadAppConfig(serviceName),
 		HTTP:     loadHTTPConfig(serviceName),
+		GRPC:     loadGRPCConfig(serviceName),
 		Postgres: loadPostgresConfig(serviceName),
 		Redis:    loadRedisConfig(serviceName),
 		RabbitMQ: loadRabbitMQConfig(serviceName),
@@ -125,6 +134,15 @@ func loadHTTPConfig(serviceName string) HTTPConfig {
 		WriteTimeout:      getDurationEnv(serviceName, "HTTP_WRITE_TIMEOUT", 10*time.Second),
 		IdleTimeout:       getDurationEnv(serviceName, "HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ShutdownTimeout:   getDurationEnv(serviceName, "HTTP_SHUTDOWN_TIMEOUT", 10*time.Second),
+	}
+}
+
+func loadGRPCConfig(serviceName string) GRPCConfig {
+	return GRPCConfig{
+		Addr:               getServiceEnv(serviceName, "GRPC_ADDR", ":9090"),
+		ShutdownTimeout:    getDurationEnv(serviceName, "GRPC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		MaxRecvMessageSize: getIntEnv(serviceName, "GRPC_MAX_RECV_MESSAGE_SIZE", 4*1024*1024),
+		MaxSendMessageSize: getIntEnv(serviceName, "GRPC_MAX_SEND_MESSAGE_SIZE", 4*1024*1024),
 	}
 }
 
@@ -212,6 +230,18 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.HTTP.ShutdownTimeout <= 0 {
 		return errors.New("HTTP_SHUTDOWN_TIMEOUT must be positive")
+	}
+	if cfg.GRPC.Addr == "" {
+		return errors.New("GRPC_ADDR is required")
+	}
+	if cfg.GRPC.ShutdownTimeout <= 0 {
+		return errors.New("GRPC_SHUTDOWN_TIMEOUT must be positive")
+	}
+	if cfg.GRPC.MaxRecvMessageSize <= 0 {
+		return errors.New("GRPC_MAX_RECV_MESSAGE_SIZE must be positive")
+	}
+	if cfg.GRPC.MaxSendMessageSize <= 0 {
+		return errors.New("GRPC_MAX_SEND_MESSAGE_SIZE must be positive")
 	}
 	if cfg.Postgres.MaxOpenConns < 0 {
 		return errors.New("POSTGRES_MAX_OPEN_CONNS must be non-negative")

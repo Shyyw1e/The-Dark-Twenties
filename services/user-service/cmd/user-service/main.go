@@ -11,10 +11,14 @@ import (
 	pprofservice "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/pprof"
 	runtimeobs "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/runtime"
 	rootpostgres "github.com/Shyyw1e/The-Dark-Twenties/internal/storage/postgres"
+	grpcserver "github.com/Shyyw1e/The-Dark-Twenties/internal/transport/grpc"
 	httpserver "github.com/Shyyw1e/The-Dark-Twenties/internal/transport/http"
+	userv1 "github.com/Shyyw1e/The-Dark-Twenties/proto/user/v1"
 	userpostgres "github.com/Shyyw1e/The-Dark-Twenties/services/user-service/internal/adapters/postgres"
+	usergrpc "github.com/Shyyw1e/The-Dark-Twenties/services/user-service/internal/transport/grpc"
 	userhttp "github.com/Shyyw1e/The-Dark-Twenties/services/user-service/internal/transport/http"
 	"github.com/Shyyw1e/The-Dark-Twenties/services/user-service/internal/usecase"
+	"google.golang.org/grpc"
 )
 
 const serviceName = "user-service"
@@ -35,13 +39,21 @@ func main() {
 	userRepo := userpostgres.NewUserRepository(db)
 	userUsecase := usecase.NewService(userRepo)
 	userHandler := userhttp.NewHandler(userUsecase)
+	userGRPCServer := usergrpc.NewServer(userUsecase)
 
 	mux := http.NewServeMux()
 	httpserver.RegisterHealthHandlers(mux, rootpostgres.NewHealthCheck(db))
 	userhttp.RegisterRoutes(mux, userHandler)
 
+	grpcSrv := grpc.NewServer(
+		grpc.MaxRecvMsgSize(cfg.GRPC.MaxRecvMessageSize),
+		grpc.MaxSendMsgSize(cfg.GRPC.MaxSendMessageSize),
+	)
+	userv1.RegisterUserServiceServer(grpcSrv, userGRPCServer)
+
 	starter := lifecycle.NewStarter(log, cfg.HTTP.ShutdownTimeout)
 	starter.Add(httpserver.NewService(cfg.HTTP, log, mux))
+	starter.Add(grpcserver.NewService(cfg.GRPC, log, grpcSrv))
 	starter.Add(runtimeobs.NewMonitor(cfg.Runtime, log))
 	starter.Add(pprofservice.NewService(cfg.Runtime, log))
 

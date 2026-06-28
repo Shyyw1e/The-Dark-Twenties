@@ -60,11 +60,20 @@ func (s *Starter) Run(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	if err := s.Start(ctx); err != nil {
+	runCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	if err := s.Start(runCtx); err != nil {
 		return err
 	}
 
-	s.waitShutdownSignal(ctx)
+	<-runCtx.Done()
+
+	if err := ctx.Err(); err != nil {
+		s.log.Info("shutdown requested by context", "error", err)
+	} else {
+		s.log.Info("shutdown signal received")
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()
@@ -130,18 +139,4 @@ func (s *Starter) stopServices(ctx context.Context, services []Service) error {
 	}
 
 	return joinedErr
-}
-
-func (s *Starter) waitShutdownSignal(ctx context.Context) {
-	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	<-signalCtx.Done()
-
-	if err := ctx.Err(); err != nil {
-		s.log.Info("shutdown requested by context", "error", err)
-		return
-	}
-
-	s.log.Info("shutdown signal received")
 }

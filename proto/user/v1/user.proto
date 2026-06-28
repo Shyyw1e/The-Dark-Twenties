@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Shyyw1e/The-Dark-Twenties/proto/user/v1;userv1";
+
+service UserService {
+  rpc GetOrCreateTelegramUser(GetOrCreateTelegramUserRequest) returns (User);
+}
+
+message GetOrCreateTelegramUserRequest {
+  int64 telegram_id = 1;
+  string username = 2;
+  string first_name = 3;
+  string last_name = 4;
+  string language_code = 5;
+}
+
+message User {
+  string id = 1;
+  int64 telegram_id = 2;
+  string username = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string language_code = 6;
+  string status = 7;
+  bool is_admin = 8;
+  google.protobuf.Timestamp blocked_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
