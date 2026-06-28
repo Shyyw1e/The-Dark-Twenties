@@ -55,6 +55,15 @@ type TelegramConfig struct {
 	RequestTimeout time.Duration
 }
 
+type RuntimeConfig struct {
+	MonitorEnabled           bool
+	MonitorInterval          time.Duration
+	GoroutineWarnThreshold   int
+	GoroutineGrowthThreshold int
+	PprofEnabled             bool
+	PprofAddr                string
+}
+
 type Config struct {
 	App      AppConfig
 	HTTP     HTTPConfig
@@ -62,6 +71,7 @@ type Config struct {
 	Redis    RedisConfig
 	RabbitMQ RabbitMQConfig
 	Telegram TelegramConfig
+	Runtime  RuntimeConfig
 }
 
 func MustLoad(serviceName string) *Config {
@@ -87,6 +97,7 @@ func Load(serviceName string) (*Config, error) {
 		Redis:    loadRedisConfig(serviceName),
 		RabbitMQ: loadRabbitMQConfig(serviceName),
 		Telegram: loadTelegramConfig(serviceName),
+		Runtime:  loadRuntimeConfig(serviceName),
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -174,6 +185,17 @@ func loadTelegramConfig(serviceName string) TelegramConfig {
 	}
 }
 
+func loadRuntimeConfig(serviceName string) RuntimeConfig {
+	return RuntimeConfig{
+		MonitorEnabled:           getBoolEnv(serviceName, "RUNTIME_MONITOR_ENABLED", true),
+		MonitorInterval:          getDurationEnv(serviceName, "RUNTIME_MONITOR_INTERVAL", 30*time.Second),
+		GoroutineWarnThreshold:   getIntEnv(serviceName, "RUNTIME_GOROUTINE_WARN_THRESHOLD", 1000),
+		GoroutineGrowthThreshold: getIntEnv(serviceName, "RUNTIME_GOROUTINE_GROWTH_THRESHOLD", 100),
+		PprofEnabled:             getBoolEnv(serviceName, "PPROF_ENABLED", false),
+		PprofAddr:                getServiceEnv(serviceName, "PPROF_ADDR", "127.0.0.1:6060"),
+	}
+}
+
 func validateConfig(cfg *Config) error {
 	if cfg.App.ServiceName == "" {
 		return errors.New("SERVICE_NAME is required")
@@ -205,6 +227,18 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.RabbitMQ.URL == "" {
 		return errors.New("RABBITMQ_URL is required")
+	}
+	if cfg.Runtime.MonitorInterval <= 0 {
+		return errors.New("RUNTIME_MONITOR_INTERVAL must be positive")
+	}
+	if cfg.Runtime.GoroutineWarnThreshold < 0 {
+		return errors.New("RUNTIME_GOROUTINE_WARN_THRESHOLD must be non-negative")
+	}
+	if cfg.Runtime.GoroutineGrowthThreshold < 0 {
+		return errors.New("RUNTIME_GOROUTINE_GROWTH_THRESHOLD must be non-negative")
+	}
+	if cfg.Runtime.PprofEnabled && cfg.Runtime.PprofAddr == "" {
+		return errors.New("PPROF_ADDR is required when PPROF_ENABLED=true")
 	}
 
 	return nil
@@ -255,6 +289,19 @@ func getDurationEnv(serviceName, key string, def time.Duration) time.Duration {
 		return def
 	}
 	return time.Duration(milliseconds) * time.Millisecond
+}
+
+func getBoolEnv(serviceName, key string, def bool) bool {
+	raw := getServiceEnv(serviceName, key, "")
+	if raw == "" {
+		return def
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return def
+	}
+	return value
 }
 
 func envPrefix(serviceName string) string {

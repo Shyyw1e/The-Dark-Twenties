@@ -914,6 +914,43 @@ Business:
 - Loki или другой log store;
 - optional ClickHouse для long-term traffic и product analytics.
 
+### Runtime diagnostics
+
+Так как сервис будет активно использовать HTTP servers, RabbitMQ consumers,
+workers, node pollers и фоновые задачи, нужно с первого дня следить за тихими
+утечками goroutine.
+
+Минимальные runtime-сигналы:
+
+- `runtime.NumGoroutine()` не должен монотонно расти без причины;
+- pprof goroutine profile должен быть доступен в dev/internal окружении;
+- отсутствие crash не считается признаком здоровья сервиса.
+
+Для этого есть общие lifecycle-компоненты:
+
+```text
+internal/observability/runtime
+  runtime monitor: периодически логирует goroutine count и warn при пороге/скачке
+
+internal/observability/pprof
+  pprof HTTP server: /debug/pprof/*
+```
+
+Конфиг:
+
+```text
+RUNTIME_MONITOR_ENABLED=true
+RUNTIME_MONITOR_INTERVAL=30s
+RUNTIME_GOROUTINE_WARN_THRESHOLD=1000
+RUNTIME_GOROUTINE_GROWTH_THRESHOLD=100
+
+PPROF_ENABLED=false
+PPROF_ADDR=127.0.0.1:6060
+```
+
+В production pprof нельзя открывать наружу. Только localhost, internal network,
+VPN/admin доступ или временное включение на время диагностики.
+
 ## MVP Scope
 
 MVP должен доказать, что пользователь может оплатить, получить рабочий VPN-конфиг
