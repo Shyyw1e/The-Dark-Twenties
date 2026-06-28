@@ -53,19 +53,20 @@ Go backend не проксирует пользовательский трафи
 Telegram Bot / Mini App / Admin
         |
         v
-Go Backend API
+API Gateway / BFF
         |
-        +--> users
-        +--> subscriptions
-        +--> billing
-        +--> devices
+        +--> user-service
+        +--> subscription-service
+        +--> billing-service
+        +--> device-service
         +--> tunnel-service
         +--> config-service
         +--> routing-service
-        +--> node-manager
+        +--> node-manager-service
+        +--> notification-service
         |
         v
-PostgreSQL + Redis
+PostgreSQL + Redis + RabbitMQ
 ```
 
 ### Data Plane
@@ -164,6 +165,263 @@ node-agent
 - отдавать health и capacity;
 - сообщать protocol-specific ошибки;
 - убрать вечную необходимость прямого shell-доступа центрального backend к нодам.
+
+## Микросервисная архитектура
+
+Проект сразу строится как микросервисная система с чистой архитектурой внутри
+каждого сервиса. Деление идет по business capabilities, а не по техническим
+деталям или отдельным VPN-протоколам.
+
+Базовые сервисы:
+
+- `api-gateway` / `bff`: единая входная точка для Bot, Mini App и Admin Panel.
+- `telegram-service`: Telegram Bot commands, Mini App auth, Telegram-specific UX.
+- `user-service`: пользователи, Telegram identity, роли, блокировки.
+- `subscription-service`: тарифы, trial, подписки, expiration, лимиты.
+- `billing-service`: инвойсы, платежи, webhooks, payment providers.
+- `device-service`: устройства, revoke, лимиты устройств, статусы.
+- `tunnel-service`: создание и управление туннелями через `TunnelProvider`.
+- `config-service`: subscription endpoint, генерация конфигов, QR, динамические server profiles.
+- `node-manager-service`: реестр нод, health, capacity, node assignment, failover.
+- `routing-service`: smart routing profiles, RU domain/CIDR rules, rule versions.
+- `notification-service`: Telegram-уведомления, reminders, service messages.
+- `admin-service`: админские операции, audit log, ручное управление.
+
+Протоколы не выносятся в отдельные микросервисы. Они остаются реализациями
+внутри `tunnel-service`:
+
+```text
+tunnel-service
+  +-- WireGuardProvider
+  +-- XrayProvider
+  +-- HysteriaProvider
+  +-- TuicProvider
+```
+
+Так подписки, лимиты, отключения и anti-abuse правила не дублируются между
+`wireguard-service`, `vless-service`, `vmess-service` и другими техническими
+сервисами.
+
+### Чистая архитектура внутри сервиса
+
+Каждый сервис должен иметь одинаковую внутреннюю форму:
+
+```text
+cmd/
+  service-name/
+
+internal/
+  domain/
+  usecase/
+  ports/
+  adapters/
+  transport/
+  infrastructure/
+```
+
+Направление зависимостей:
+
+```text
+transport -> usecase -> domain
+adapters  -> ports   -> usecase
+```
+
+`domain` и `usecase` не должны знать про PostgreSQL, Redis, RabbitMQ, Telegram,
+HTTP, gRPC, WireGuard CLI или Xray JSON. Они работают через интерфейсы из `ports`.
+
+## RabbitMQ
+
+RabbitMQ используется как event bus и task queue для микросервисов. Он не заменяет
+HTTP/gRPC полностью: синхронные запросы остаются для быстрых операций и чтения
+текущего состояния, а RabbitMQ используется для событий, фоновых задач и надежных
+асинхронных процессов.
+
+Правило:
+
+```text
+HTTP/gRPC        = быстро запросить состояние или выполнить sync use case
+RabbitMQ events  = сообщить, что факт уже произошел
+RabbitMQ commands = поставить надежную задачу на выполнение
+```
+
+### Events и Commands
+
+Event - это факт:
+
+```text
+payment.succeeded
+subscription.activated
+tunnel.provisioned
+config.generated
+node.became_degraded
+```
+
+Command - это просьба выполнить действие:
+
+```text
+tunnel.provision
+tunnel.disable
+config.generate
+notification.telegram.send
+subscription.expire
+```
+
+### Exchanges
+
+Минимальная схема RabbitMQ:
+
+```text
+vpn.events.topic      # domain events
+vpn.commands.direct   # task/command queues
+vpn.retry             # retry queues
+vpn.dlx               # dead-letter exchange
+```
+
+Рекомендуемые очереди на старте:
+
+```text
+subscription.payment-events
+tunnel.provision
+tunnel.disable
+config.generate
+notification.telegram
+node.health
+admin.audit-events
+```
+
+### Основной event flow
+
+Первый сквозной поток, который стоит реализовать:
+
+```text
+billing-service
+  publishes: payment.succeeded
+
+subscription-service
+  consumes: payment.succeeded
+  activates subscription
+  publishes: subscription.activated
+
+tunnel-service
+  consumes: subscription.activated
+  creates tunnel record
+  publishes command: tunnel.provision
+
+node-manager-service / tunnel worker
+  consumes: tunnel.provision
+  applies config on node
+  publishes: tunnel.provisioned
+
+config-service
+  consumes: tunnel.provisioned
+  generates subscription token, config and QR
+  publishes: subscription_config.generated
+
+notification-service
+  consumes: subscription_config.generated
+  sends Telegram message
+```
+
+### Envelope сообщений
+
+Все события и команды должны иметь единый envelope:
+
+```json
+{
+  "message_id": "uuid",
+  "message_type": "subscription.activated",
+  "message_version": 1,
+  "occurred_at": "2026-05-28T12:00:00Z",
+  "producer": "subscription-service",
+  "correlation_id": "uuid",
+  "causation_id": "uuid",
+  "idempotency_key": "subscription:123:activated",
+  "payload": {}
+}
+```
+
+Обязательные поля:
+
+- `message_id`;
+- `message_type`;
+- `message_version`;
+- `occurred_at`;
+- `producer`;
+- `correlation_id`;
+- `idempotency_key`;
+- `payload`.
+
+`correlation_id` должен проходить через HTTP/gRPC, RabbitMQ и логгер, чтобы один
+пользовательский сценарий можно было собрать по логам между сервисами.
+
+### Идемпотентность
+
+RabbitMQ дает at-least-once delivery, поэтому consumer может получить одно и то же
+сообщение больше одного раза.
+
+У каждого consumer должна быть таблица:
+
+```text
+processed_messages:
+  message_id
+  consumer_name
+  processed_at
+  status
+```
+
+Правило обработки:
+
+```text
+если message_id уже обработан этим consumer:
+  ack
+иначе:
+  выполнить use case
+  записать processed_messages
+  ack
+```
+
+Команды, которые меняют состояние внешней системы, например применяют peer на
+VPN-ноде или активируют подписку, должны быть идемпотентными на уровне use case.
+
+### Retry и DLQ
+
+Не делать бесконечный immediate retry.
+
+Рекомендуемая схема:
+
+```text
+main queue
+  -> error
+  -> retry queue with TTL
+  -> back to main queue
+  -> after N attempts
+  -> DLQ
+```
+
+Пример retry-уровней:
+
+```text
+retry 1: 10 seconds
+retry 2: 1 minute
+retry 3: 5 minutes
+retry 4: 30 minutes
+then DLQ
+```
+
+DLQ должна быть видна в admin/ops интерфейсе, чтобы можно было вручную
+переобработать или закрыть проблемные сообщения.
+
+### Где RabbitMQ особенно важен
+
+- billing webhooks: быстро принять webhook, сохранить событие и обработать дальше асинхронно;
+- tunnel provisioning: применение конфига на ноду может быть долгим и падать;
+- subscription expiration: worker публикует команды на отключение туннелей;
+- config generation: QR/config можно генерировать отдельным consumer;
+- subscription refresh: Happ/v2RayTun вручную обновляют подписку через `/sub/{token}`;
+- notifications: Telegram API не должен блокировать billing или provisioning;
+- traffic usage: ноды могут отправлять usage батчами;
+- node health: изменения состояния нод рассылаются заинтересованным сервисам;
+- routing updates: при смене routing profile можно массово пересоздавать конфиги.
 
 ## Стратегия VPN-стека
 
@@ -285,55 +543,130 @@ Mode: RU Relay
 - Xray routing rules;
 - plain CIDR/domain lists для внутренних инструментов.
 
-## Backend-модули
+## Config Subscription для Happ/v2RayTun
 
-Начинать лучше с modular monolith. Разделять на сервисы стоит только тогда, когда
-к этому принуждает масштаб или границы команды.
+Happ, v2RayTun и похожие клиенты работают не как "одноразовый config file", а как
+оркестраторы подписки. Пользователь импортирует subscription link, а затем может
+нажать "обновить подписку". В этот момент клиент снова запрашивает backend и
+получает актуальный список серверов.
+
+```text
+Happ/v2RayTun
+  -> GET /sub/{token}
+  -> config-service
+  -> validate token, device, user, subscription
+  -> select healthy node profiles
+  -> render client-specific subscription
+  -> return config
+```
+
+Важно: backend не создает live-туннель при нажатии пользователем "подключить".
+Live-туннель создает клиентское приложение на устройстве. Backend создает и
+обновляет access credentials и subscription config.
+
+Термины:
+
+```text
+Tunnel access = provisioned UUID/key/profile на backend и VPN-нодах
+Client tunnel = live TUN/proxy connection внутри Happ/v2RayTun
+Node session  = наблюдаемая активность на data plane
+```
+
+`config-service` отвечает за:
+
+- стабильный subscription URL;
+- хранение hash от subscription token;
+- проверку active subscription/device;
+- динамический список серверов;
+- client-specific format: Happ, v2RayTun, sing-box, Clash, plain URI list;
+- обновление списка серверов при degraded/down нодах;
+- profile metadata: active_until, device_limit, update interval, server names;
+- запись refresh events для аналитики и anti-abuse.
+
+Когда пользователь нажимает "обновить подписку", config-service может вернуть
+другой набор серверов:
+
+- убрать degraded/down node;
+- добавить новую foreign exit node;
+- добавить RU relay;
+- поменять transport/profile priority;
+- обновить Reality/VLESS параметры;
+- обновить routing profile version.
+
+Ping серверов в Happ/v2RayTun выполняется самим клиентом. Это client-side latency
+test, а не команда backend. Backend должен только не отдавать явно плохие ноды и
+поддерживать собственный health score через `node-manager-service`.
+
+Типы latency:
+
+```text
+client-measured ping = измерение из сети пользователя внутри Happ/v2RayTun
+server-side health   = измерение node-manager/monitoring инфраструктурой
+```
+
+Для UX лучше не делать названия "Обход 1", "Обход 2" полностью случайными при
+каждом refresh. Предпочтительнее стабильные profile slots:
+
+```text
+Обход 1 - Netherlands
+Обход 2 - Germany
+Обход 3 - Finland
+Обход 4 - Fallback TCP
+Обход 5 - RU Relay
+```
+
+Менять конкретную ноду внутри slot стоит при degraded/down состоянии, overload или
+ручном drain.
+
+## Backend-модули и репозитории
+
+Проект ориентируется на микросервисную архитектуру. На старте можно держать код в
+одном mono-repo, но каждый сервис должен иметь отдельную точку входа, отдельные
+границы домена и собственные миграции.
+
+```text
+services/
+  api-gateway/
+  telegram-service/
+  user-service/
+  subscription-service/
+  billing-service/
+  device-service/
+  tunnel-service/
+  config-service/
+  node-manager-service/
+  routing-service/
+  notification-service/
+  admin-service/
+
+shared/
+  logger/
+  messaging/
+  observability/
+  errors/
+  contracts/
+```
+
+Внутри каждого сервиса:
 
 ```text
 cmd/
-  api/
-  bot/
-  worker/
-  node-agent/
+  service-name/
 
 internal/
-  users/
-  auth/
-  billing/
-  subscriptions/
-  plans/
-  devices/
-  tunnels/
-  configs/
-  nodes/
-  routing/
-  traffic/
-  support/
-  admin/
-  telegram/
-  observability/
+  domain/
+  usecase/
+  ports/
+  adapters/
+  transport/
+  infrastructure/
 
-pkg/
-  tunnelprovider/
-  wireguard/
-  xray/
-  hysteria/
-  payments/
+migrations/
 ```
 
-Возможные service boundaries на будущее:
-
-- `api-gateway`;
-- `bot-service`;
-- `billing-service`;
-- `subscription-service`;
-- `tunnel-service`;
-- `node-manager`;
-- `config-service`;
-- `routing-service`;
-- `admin-api`;
-- `worker`.
+`shared` не должен превращаться в скрытый монолит. В нем допустимы только
+инфраструктурные библиотеки и стабильные контракты: logger, messaging envelope,
+tracing, common errors, generated API/event contracts.
 
 ## Модель базы данных
 
@@ -350,6 +683,10 @@ vpn_nodes
 tunnels
 tunnel_configs
 traffic_usage
+vpn_sessions
+subscription_tokens
+config_profiles
+subscription_refresh_events
 server_health_checks
 routing_rulesets
 admin_audit_log
@@ -392,6 +729,40 @@ tunnel_configs:
   created_at
 ```
 
+Config subscription:
+
+```text
+subscription_tokens:
+  id
+  user_id
+  device_id
+  subscription_id
+  token_hash
+  status
+  client_type
+  format
+  expires_at
+  last_used_at
+  refresh_count
+  revoked_at
+```
+
+Observed sessions:
+
+```text
+vpn_sessions:
+  id
+  tunnel_id
+  node_id
+  protocol
+  source_ip_hash
+  status
+  started_at
+  last_seen_at
+  rx_bytes
+  tx_bytes
+```
+
 ## Жизненный цикл подписки
 
 ```text
@@ -407,10 +778,13 @@ Subscription becomes active
 Backend selects node and protocol
     |
     v
-TunnelProvider creates tunnel
+TunnelProvider creates access credentials
     |
     v
-ConfigService returns QR/config/subscription link
+ConfigService creates subscription token and returns QR/subscription link
+    |
+    v
+Client refreshes /sub/{token} and receives actual server profiles
     |
     v
 Worker checks expiration and limits
@@ -540,6 +914,43 @@ Business:
 - Loki или другой log store;
 - optional ClickHouse для long-term traffic и product analytics.
 
+### Runtime diagnostics
+
+Так как сервис будет активно использовать HTTP servers, RabbitMQ consumers,
+workers, node pollers и фоновые задачи, нужно с первого дня следить за тихими
+утечками goroutine.
+
+Минимальные runtime-сигналы:
+
+- `runtime.NumGoroutine()` не должен монотонно расти без причины;
+- pprof goroutine profile должен быть доступен в dev/internal окружении;
+- отсутствие crash не считается признаком здоровья сервиса.
+
+Для этого есть общие lifecycle-компоненты:
+
+```text
+internal/observability/runtime
+  runtime monitor: периодически логирует goroutine count и warn при пороге/скачке
+
+internal/observability/pprof
+  pprof HTTP server: /debug/pprof/*
+```
+
+Конфиг:
+
+```text
+RUNTIME_MONITOR_ENABLED=true
+RUNTIME_MONITOR_INTERVAL=30s
+RUNTIME_GOROUTINE_WARN_THRESHOLD=1000
+RUNTIME_GOROUTINE_GROWTH_THRESHOLD=100
+
+PPROF_ENABLED=false
+PPROF_ADDR=127.0.0.1:6060
+```
+
+В production pprof нельзя открывать наружу. Только localhost, internal network,
+VPN/admin доступ или временное включение на время диагностики.
+
 ## MVP Scope
 
 MVP должен доказать, что пользователь может оплатить, получить рабочий VPN-конфиг
@@ -547,9 +958,10 @@ MVP должен доказать, что пользователь может о
 
 MVP включает:
 
-- Go backend;
+- Go microservices;
 - PostgreSQL;
 - Redis;
+- RabbitMQ;
 - Telegram Bot;
 - базовый Mini App или простой web cabinet;
 - WireGuardProvider;
@@ -586,15 +998,31 @@ Outcome: архитектура достаточно стабильна, что�
 
 ### Stage 1: Backend Foundation
 
-Outcome: базовый control plane умеет регистрировать пользователей и управлять подписками.
+Outcome: базовый микросервисный control plane умеет регистрировать пользователей
+и управлять подписками.
 
-- Создать структуру Go-проекта.
-- Добавить config, logging, migrations и health endpoint.
-- Реализовать users и Telegram identity.
-- Реализовать plans и subscriptions.
+- Создать mono-repo структуру `services/*` и `shared/*`.
+- Добавить общий logger, config, errors, health endpoint и graceful shutdown.
+- Поднять локальный Docker Compose: PostgreSQL, Redis, RabbitMQ.
+- Описать messaging envelope и базовые RabbitMQ adapters.
+- Реализовать `user-service` и Telegram identity.
+- Реализовать `subscription-service`: plans, subscriptions, trial.
 - Добавить Redis-backed rate limiting.
 - Добавить worker process для scheduled jobs.
 - Добавить основу admin audit log.
+
+### Stage 1.5: RabbitMQ Backbone
+
+Outcome: сервисы умеют безопасно обмениваться событиями и командами.
+
+- Настроить exchanges: `vpn.events.topic`, `vpn.commands.direct`, `vpn.retry`, `vpn.dlx`.
+- Описать стандарт event/command envelope.
+- Добавить publisher confirms.
+- Добавить manual ack/nack в consumers.
+- Добавить `processed_messages` для идемпотентности consumers.
+- Добавить retry queues с TTL.
+- Добавить DLQ и базовый ops-view для проблемных сообщений.
+- Протащить `correlation_id` через HTTP/gRPC, RabbitMQ и logger.
 
 ### Stage 2: WireGuard MVP
 
@@ -608,6 +1036,21 @@ Outcome: пользователь может получить настоящий
 - Хранить config material в зашифрованном виде.
 - Добавить expiration worker, который отключает expired peers.
 - Добавить базовый usage collection.
+
+### Stage 2.5: Config Subscription MVP
+
+Outcome: Happ/v2RayTun могут импортировать стабильную subscription link и
+обновлять список серверов кнопкой refresh.
+
+- Реализовать `config-service`.
+- Создать `subscription_tokens` и хранить только `token_hash`.
+- Реализовать `GET /sub/{token}`.
+- Проверять active token, user, device и subscription.
+- Генерировать plain URI list для VLESS/WireGuard-compatible profiles.
+- Логировать `subscription_refresh_events`.
+- Добавить `client_type` и `format`.
+- Обновлять `last_used_at` и `refresh_count`.
+- Возвращать только healthy/degraded-acceptable node profiles.
 
 ### Stage 3: Telegram Bot MVP
 
@@ -631,6 +1074,7 @@ Outcome: paid subscriptions работают безопасно.
 - Создать invoice flow из Bot/Mini App.
 - Реализовать webhook verification.
 - Добавить idempotent payment event processing.
+- Публиковать `payment.succeeded` и `payment.failed` через RabbitMQ.
 - Активировать и продлевать subscriptions только через server-side webhooks.
 - Добавить payment history в admin panel.
 
@@ -656,6 +1100,7 @@ Outcome: provisioning нод больше не зависит от ручных 
 - Добавить agent registration.
 - Реализовать WireGuard peer apply/remove.
 - Добавить traffic и health reporting.
+- Публиковать `node.health_changed` и `node.became_degraded`.
 - Добавить node capacity и load score.
 - Заменить SSH provisioning path.
 
@@ -670,6 +1115,7 @@ Outcome: anti-blocking профиль доступен без изменения
 - Добавить multi-protocol config на устройство или подписку.
 - Добавить protocol selector в Bot/Mini App.
 - Добавить operational metrics per protocol.
+- Добавить Happ/v2RayTun-specific renderers для subscription profiles.
 
 ### Stage 8: Smart Routing v1
 
@@ -695,6 +1141,7 @@ Outcome: сервис переживает типовые production-пробл�
 - Добавить soft lock и manual review flows.
 - Добавить backup и restore procedures.
 - Добавить alerts на node loss, payment failures и config errors.
+- Добавить replay/retry tooling для сообщений из DLQ.
 
 ### Stage 10: Mini App
 
@@ -726,7 +1173,7 @@ Outcome: система готова к реальному платному тр
 
 Outcome: архитектура может расти без переписывания продукта.
 
-- Разделить modular monolith, если это действительно нужно.
+- Выносить отдельные сервисы в разные репозитории, если mono-repo начнет мешать.
 - Перенести analytics в ClickHouse.
 - Добавить multi-region node pools.
 - Добавить canary rollout для routing rules и node configs.
@@ -739,20 +1186,24 @@ Outcome: архитектура может расти без переписыв�
 
 Самый безопасный порядок разработки:
 
-1. Go backend skeleton.
-2. PostgreSQL migrations.
-3. Users и subscriptions.
-4. `TunnelProvider` interface.
-5. `WireGuardProvider`.
-6. Telegram Bot trial flow.
-7. Config и QR generation.
-8. Expiration worker.
-9. Billing webhooks.
-10. Admin panel basics.
-11. Node agent.
-12. Xray/VLESS Reality.
-13. Smart routing.
-14. Mini App polish и referrals.
+1. Mono-repo skeleton для `services/*` и `shared/*`.
+2. Docker Compose: PostgreSQL, Redis, RabbitMQ.
+3. Общие logger, config, health, graceful shutdown.
+4. Messaging envelope, RabbitMQ publisher/consumer adapters.
+5. PostgreSQL migrations по сервисам.
+6. `user-service` и `subscription-service`.
+7. `TunnelProvider` interface внутри `tunnel-service`.
+8. `WireGuardProvider`.
+9. Telegram Bot trial flow.
+10. Config и QR generation.
+11. Subscription endpoint `/sub/{token}` для Happ/v2RayTun.
+12. Expiration worker через RabbitMQ command.
+13. Billing webhooks и payment events.
+14. Admin panel basics.
+15. Node agent.
+16. Xray/VLESS Reality.
+17. Smart routing.
+18. Mini App polish и referrals.
 
 ## Главное инженерное правило
 
