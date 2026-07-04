@@ -57,9 +57,11 @@ type RabbitMQConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken       string
-	MiniAppSecret  string
-	RequestTimeout time.Duration
+	BotToken            string
+	MiniAppSecret       string
+	RequestTimeout      time.Duration
+	PollTimeoutSeconds  int
+	UserServiceGRPCAddr string
 }
 
 type RuntimeConfig struct {
@@ -197,9 +199,11 @@ func loadRabbitMQConfig(serviceName string) RabbitMQConfig {
 
 func loadTelegramConfig(serviceName string) TelegramConfig {
 	return TelegramConfig{
-		BotToken:       getServiceEnv(serviceName, "TG_BOT_TOKEN", ""),
-		MiniAppSecret:  getServiceEnv(serviceName, "TG_MINI_APP_SECRET", ""),
-		RequestTimeout: getDurationEnv(serviceName, "TELEGRAM_REQUEST_TIMEOUT", 10*time.Second),
+		BotToken:            getServiceEnv(serviceName, "TG_BOT_TOKEN", ""),
+		MiniAppSecret:       getServiceEnv(serviceName, "TG_MINI_APP_SECRET", ""),
+		RequestTimeout:      getDurationEnv(serviceName, "TELEGRAM_REQUEST_TIMEOUT", 10*time.Second),
+		PollTimeoutSeconds:  getIntEnv(serviceName, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
+		UserServiceGRPCAddr: getServiceEnv(serviceName, "USER_SERVICE_GRPC_ADDR", "localhost:9091"),
 	}
 }
 
@@ -257,6 +261,9 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.RabbitMQ.URL == "" {
 		return errors.New("RABBITMQ_URL is required")
+	}
+	if cfg.Telegram.PollTimeoutSeconds <= 0 {
+		return errors.New("TELEGRAM_POLL_TIMEOUT_SECONDS must be positive")
 	}
 	if cfg.Runtime.MonitorInterval <= 0 {
 		return errors.New("RUNTIME_MONITOR_INTERVAL must be positive")

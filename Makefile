@@ -24,7 +24,7 @@ BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
 CONFIG_MIGRATIONS := services/config-service/migrations
 
-.PHONY: help os test proto-gen goose-install run-user-service \
+.PHONY: help os test proto-gen goose-install run-user-service run-telegram-service \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
@@ -42,6 +42,7 @@ help:
 	@echo "  make proto-gen"
 	@echo "  make goose-install"
 	@echo "  make run-user-service"
+	@echo "  make run-telegram-service"
 	@echo ""
 	@echo "All migrations:"
 	@echo "  make migrate-status"
@@ -69,6 +70,9 @@ goose-install:
 
 run-user-service:
 	go run ./services/user-service/cmd/user-service
+
+run-telegram-service:
+	go run ./services/telegram-service/cmd/telegram-service
 
 migrate-status: migrate-user-status migrate-subscription-status migrate-billing-status migrate-tunnel-status migrate-config-status
 
