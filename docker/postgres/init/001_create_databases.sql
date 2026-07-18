@@ -1,0 +1,5 @@
+CREATE DATABASE dark_twenties_users;
+CREATE DATABASE dark_twenties_subscriptions;
+CREATE DATABASE dark_twenties_billing;
+CREATE DATABASE dark_twenties_tunnels;
+CREATE DATABASE dark_twenties_configs;
