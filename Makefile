@@ -18,6 +18,7 @@ endif
 GOOSE ?= $(shell go env GOPATH)/bin/goose
 GOOSE_VERSION ?= v3.26.0
 COMPOSE ?= docker compose
+PROTOC_PATH := $(shell go env GOPATH)/bin:$(PATH)
 
 USER_MIGRATIONS := services/user-service/migrations
 SUBSCRIPTION_MIGRATIONS := services/subscription-service/migrations
@@ -25,7 +26,7 @@ BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
 CONFIG_MIGRATIONS := services/config-service/migrations
 
-.PHONY: help os test rabbitmq-smoke proto-gen goose-install compose-up compose-down compose-logs run-user-service run-telegram-service \
+.PHONY: help os test rabbitmq-smoke proto-gen goose-install compose-up compose-down compose-logs run-user-service run-subscription-service run-telegram-service \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
@@ -46,6 +47,7 @@ help:
 	@echo "  make compose-up"
 	@echo "  make compose-down"
 	@echo "  make run-user-service"
+	@echo "  make run-subscription-service"
 	@echo "  make run-telegram-service"
 	@echo ""
 	@echo "All migrations:"
@@ -70,7 +72,7 @@ rabbitmq-smoke:
 	RABBITMQ_SMOKE=1 go test ./internal/messaging/rabbitmq -run TestConsumerRetryLevelsAndDLQIntegration -count=1 -v
 
 proto-gen:
-	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/user/v1/user.proto
+	PATH="$(PROTOC_PATH)" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/user/v1/user.proto proto/subscription/v1/subscription.proto
 
 goose-install:
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
@@ -86,6 +88,9 @@ compose-logs:
 
 run-user-service:
 	go run ./services/user-service/cmd/user-service
+
+run-subscription-service:
+	go run ./services/subscription-service/cmd/subscription-service
 
 run-telegram-service:
 	go run ./services/telegram-service/cmd/telegram-service

@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package subscription.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Shyyw1e/The-Dark-Twenties/proto/subscription/v1;subscriptionv1";
+
+service SubscriptionService {
+  rpc StartTrial(StartTrialRequest) returns (Subscription);
+  rpc ActivateOrRenew(ActivateOrRenewRequest) returns (Subscription);
+  rpc GetActive(GetActiveRequest) returns (Subscription);
+}
+
+message StartTrialRequest {
+  string user_id = 1;
+}
+
+message ActivateOrRenewRequest {
+  string user_id = 1;
+  string plan_code = 2;
+  bool auto_renew = 3;
+}
+
+message GetActiveRequest {
+  string user_id = 1;
+}
+
+message Plan {
+  string id = 1;
+  string code = 2;
+  string name = 3;
+  string description = 4;
+  int64 price_amount = 5;
+  string currency = 6;
+  int32 duration_days = 7;
+  int32 device_limit = 8;
+  optional int64 traffic_limit_bytes = 9;
+  bool is_trial = 10;
+  bool is_active = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message Subscription {
+  string id = 1;
+  string user_id = 2;
+  string plan_id = 3;
+  string status = 4;
+  google.protobuf.Timestamp starts_at = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  bool auto_renew = 7;
+  bool trial = 8;
+  google.protobuf.Timestamp cancelled_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
