@@ -1,3 +1,5 @@
 .env
 dns.json
 dns.telegram-test.json
+graphify-out/*
+.agents/*

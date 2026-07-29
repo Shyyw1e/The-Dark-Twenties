@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Shyyw1e/The-Dark-Twenties/internal/correlation"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/messaging/message"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/messaging/processed"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -111,6 +112,26 @@ func TestConsumerProcessEnvelopeSkipsAlreadyProcessedMessage(t *testing.T) {
 	}
 	if len(store.marked) != 0 {
 		t.Fatalf("marked count = %d, want 0", len(store.marked))
+	}
+}
+
+func TestConsumerProcessEnvelopeAddsCorrelationIDToContext(t *testing.T) {
+	envelope := testEnvelope(t)
+	envelope.CorrelationID = "correlation-123"
+
+	var gotCorrelationID string
+	consumer := NewConsumer(nil, nil, ConsumerOptions{
+		Name: "subscription.payment-events",
+	}, HandlerFunc(func(ctx context.Context, envelope *message.Envelope) error {
+		gotCorrelationID = correlation.FromContext(ctx)
+		return nil
+	}))
+
+	if err := consumer.processEnvelope(context.Background(), envelope); err != nil {
+		t.Fatalf("processEnvelope returned error: %v", err)
+	}
+	if gotCorrelationID != envelope.CorrelationID {
+		t.Fatalf("correlation id from context = %q, want %q", gotCorrelationID, envelope.CorrelationID)
 	}
 }
 

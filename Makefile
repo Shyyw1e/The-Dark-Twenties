@@ -25,7 +25,7 @@ BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
 CONFIG_MIGRATIONS := services/config-service/migrations
 
-.PHONY: help os test proto-gen goose-install compose-up compose-down compose-logs run-user-service run-telegram-service \
+.PHONY: help os test rabbitmq-smoke proto-gen goose-install compose-up compose-down compose-logs run-user-service run-telegram-service \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
@@ -40,6 +40,7 @@ help:
 	@echo ""
 	@echo "Common:"
 	@echo "  make test"
+	@echo "  make rabbitmq-smoke"
 	@echo "  make proto-gen"
 	@echo "  make goose-install"
 	@echo "  make compose-up"
@@ -64,6 +65,9 @@ os:
 
 test:
 	go test ./...
+
+rabbitmq-smoke:
+	RABBITMQ_SMOKE=1 go test ./internal/messaging/rabbitmq -run TestConsumerRetryLevelsAndDLQIntegration -count=1 -v
 
 proto-gen:
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/user/v1/user.proto

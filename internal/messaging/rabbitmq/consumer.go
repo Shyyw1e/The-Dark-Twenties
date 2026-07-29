@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Shyyw1e/The-Dark-Twenties/internal/correlation"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/logger"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/messaging/message"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/messaging/processed"
@@ -423,6 +424,7 @@ func (c *Consumer) processEnvelope(ctx context.Context, envelope *message.Envelo
 	if envelope == nil {
 		return errors.New("message envelope is nil")
 	}
+	ctx = correlation.IntoContext(ctx, envelope.CorrelationID)
 
 	consumerName := c.Name()
 	if c.opts.ProcessedMessages != nil {
