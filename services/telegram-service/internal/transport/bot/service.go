@@ -8,6 +8,7 @@ import (
 
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/config"
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/logger"
+	subscriptionclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/subscription"
 	userclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/user"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -15,16 +16,17 @@ import (
 const serviceName = "telegram-bot-polling"
 
 type Service struct {
-	bot         *tgbotapi.BotAPI
-	users       *userclient.Client
-	log         logger.Logger
-	pollTimeout int
+	bot           *tgbotapi.BotAPI
+	users         *userclient.Client
+	subscriptions *subscriptionclient.Client
+	log           logger.Logger
+	pollTimeout   int
 
 	cancel context.CancelFunc
 	done   chan struct{}
 }
 
-func NewService(bot *tgbotapi.BotAPI, users *userclient.Client, cfg config.TelegramConfig, log logger.Logger) *Service {
+func NewService(bot *tgbotapi.BotAPI, users *userclient.Client, subscriptions *subscriptionclient.Client, cfg config.TelegramConfig, log logger.Logger) *Service {
 	if log == nil {
 		log = logger.FromContext(context.Background())
 	}
@@ -33,11 +35,12 @@ func NewService(bot *tgbotapi.BotAPI, users *userclient.Client, cfg config.Teleg
 	}
 
 	return &Service{
-		bot:         bot,
-		users:       users,
-		log:         log,
-		pollTimeout: cfg.PollTimeoutSeconds,
-		done:        make(chan struct{}),
+		bot:           bot,
+		users:         users,
+		subscriptions: subscriptions,
+		log:           log,
+		pollTimeout:   cfg.PollTimeoutSeconds,
+		done:          make(chan struct{}),
 	}
 }
 

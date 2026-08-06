@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewServiceDefaults(t *testing.T) {
-	service := NewService(nil, nil, config.TelegramConfig{}, nil)
+	service := NewService(nil, nil, nil, config.TelegramConfig{}, nil)
 
 	if service.Name() != serviceName {
 		t.Fatalf("name = %q, want %q", service.Name(), serviceName)
@@ -23,7 +23,7 @@ func TestNewServiceDefaults(t *testing.T) {
 }
 
 func TestStartValidatesDependencies(t *testing.T) {
-	service := NewService(nil, nil, config.TelegramConfig{}, nil)
+	service := NewService(nil, nil, nil, config.TelegramConfig{}, nil)
 
 	err := service.Start(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "telegram bot api is nil") {

@@ -57,11 +57,12 @@ type RabbitMQConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken            string
-	MiniAppSecret       string
-	RequestTimeout      time.Duration
-	PollTimeoutSeconds  int
-	UserServiceGRPCAddr string
+	BotToken                    string
+	MiniAppSecret               string
+	RequestTimeout              time.Duration
+	PollTimeoutSeconds          int
+	UserServiceGRPCAddr         string
+	SubscriptionServiceGRPCAddr string
 }
 
 type RuntimeConfig struct {
@@ -199,11 +200,12 @@ func loadRabbitMQConfig(serviceName string) RabbitMQConfig {
 
 func loadTelegramConfig(serviceName string) TelegramConfig {
 	return TelegramConfig{
-		BotToken:            getServiceEnv(serviceName, "TG_BOT_TOKEN", ""),
-		MiniAppSecret:       getServiceEnv(serviceName, "TG_MINI_APP_SECRET", ""),
-		RequestTimeout:      getDurationEnv(serviceName, "TELEGRAM_REQUEST_TIMEOUT", 10*time.Second),
-		PollTimeoutSeconds:  getIntEnv(serviceName, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
-		UserServiceGRPCAddr: getServiceEnv(serviceName, "USER_SERVICE_GRPC_ADDR", "localhost:9091"),
+		BotToken:                    getServiceEnv(serviceName, "TG_BOT_TOKEN", ""),
+		MiniAppSecret:               getServiceEnv(serviceName, "TG_MINI_APP_SECRET", ""),
+		RequestTimeout:              getDurationEnv(serviceName, "TELEGRAM_REQUEST_TIMEOUT", 10*time.Second),
+		PollTimeoutSeconds:          getIntEnv(serviceName, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
+		UserServiceGRPCAddr:         getServiceEnv(serviceName, "USER_SERVICE_GRPC_ADDR", "localhost:9091"),
+		SubscriptionServiceGRPCAddr: getServiceEnv(serviceName, "SUBSCRIPTION_SERVICE_GRPC_ADDR", "localhost:9092"),
 	}
 }
 

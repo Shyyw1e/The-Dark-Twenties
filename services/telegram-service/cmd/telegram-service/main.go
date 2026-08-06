@@ -11,6 +11,7 @@ import (
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/logger"
 	pprofservice "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/pprof"
 	runtimeobs "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/runtime"
+	subscriptionclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/subscription"
 	userclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/user"
 	bottransport "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/transport/bot"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -46,8 +47,15 @@ func main() {
 	}
 	defer users.Close()
 
+	subscriptions, err := subscriptionclient.Dial(ctx, cfg.Telegram.SubscriptionServiceGRPCAddr)
+	if err != nil {
+		log.Error("failed to connect subscription-service grpc", "addr", cfg.Telegram.SubscriptionServiceGRPCAddr, "error", err)
+		os.Exit(1)
+	}
+	defer subscriptions.Close()
+
 	starter := lifecycle.NewStarter(log, cfg.HTTP.ShutdownTimeout)
-	starter.Add(bottransport.NewService(botAPI, users, cfg.Telegram, log))
+	starter.Add(bottransport.NewService(botAPI, users, subscriptions, cfg.Telegram, log))
 	starter.Add(runtimeobs.NewMonitor(cfg.Runtime, log))
 	starter.Add(pprofservice.NewService(cfg.Runtime, log))
 

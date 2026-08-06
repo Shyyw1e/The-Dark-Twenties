@@ -15,6 +15,7 @@ func TestLoadUsesServiceSpecificEnv(t *testing.T) {
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("USER_SERVICE_HTTP_ADDR", ":18080")
 	t.Setenv("USER_SERVICE_GRPC_ADDR", ":19090")
+	t.Setenv("SUBSCRIPTION_SERVICE_GRPC_ADDR", ":19092")
 	t.Setenv("USER_SERVICE_POSTGRES_DSN", "postgres://user:pass@localhost:5432/user?sslmode=disable")
 	t.Setenv("USER_SERVICE_REDIS_DB", "2")
 	t.Setenv("USER_SERVICE_RUNTIME_MONITOR_INTERVAL", "250ms")
@@ -37,6 +38,9 @@ func TestLoadUsesServiceSpecificEnv(t *testing.T) {
 	}
 	if cfg.Runtime.MonitorInterval != 250*time.Millisecond {
 		t.Fatalf("monitor interval = %v, want 250ms", cfg.Runtime.MonitorInterval)
+	}
+	if cfg.Telegram.SubscriptionServiceGRPCAddr != ":19092" {
+		t.Fatalf("subscription grpc addr = %q, want :19092", cfg.Telegram.SubscriptionServiceGRPCAddr)
 	}
 	if !cfg.Runtime.PprofEnabled {
 		t.Fatal("pprof should be enabled")
