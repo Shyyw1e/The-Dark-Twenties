@@ -11,6 +11,7 @@ import (
 	"github.com/Shyyw1e/The-Dark-Twenties/internal/logger"
 	pprofservice "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/pprof"
 	runtimeobs "github.com/Shyyw1e/The-Dark-Twenties/internal/observability/runtime"
+	configclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/config"
 	subscriptionclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/subscription"
 	userclient "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/clients/user"
 	bottransport "github.com/Shyyw1e/The-Dark-Twenties/services/telegram-service/internal/transport/bot"
@@ -54,8 +55,14 @@ func main() {
 	}
 	defer subscriptions.Close()
 
+	configs := configclient.NewClient(
+		cfg.Telegram.ConfigServiceInternalBaseURL,
+		cfg.Telegram.ConfigServicePublicBaseURL,
+		&http.Client{Timeout: cfg.Telegram.RequestTimeout},
+	)
+
 	starter := lifecycle.NewStarter(log, cfg.HTTP.ShutdownTimeout)
-	starter.Add(bottransport.NewService(botAPI, users, subscriptions, cfg.Telegram, log))
+	starter.Add(bottransport.NewService(botAPI, users, subscriptions, configs, cfg.Telegram, log))
 	starter.Add(runtimeobs.NewMonitor(cfg.Runtime, log))
 	starter.Add(pprofservice.NewService(cfg.Runtime, log))
 

@@ -26,7 +26,7 @@ BILLING_MIGRATIONS := services/billing-service/migrations
 TUNNEL_MIGRATIONS := services/tunnel-service/migrations
 CONFIG_MIGRATIONS := services/config-service/migrations
 
-.PHONY: help os test rabbitmq-smoke proto-gen goose-install compose-up compose-down compose-logs run-user-service run-subscription-service run-telegram-service \
+.PHONY: help os test rabbitmq-smoke proto-gen goose-install compose-up compose-down compose-logs run-user-service run-subscription-service run-config-service run-telegram-service \
 	migrate-status migrate-up migrate-down \
 	migrate-user-status migrate-user-up migrate-user-down migrate-user-reset \
 	migrate-subscription-status migrate-subscription-up migrate-subscription-down migrate-subscription-reset \
@@ -48,6 +48,7 @@ help:
 	@echo "  make compose-down"
 	@echo "  make run-user-service"
 	@echo "  make run-subscription-service"
+	@echo "  make run-config-service"
 	@echo "  make run-telegram-service"
 	@echo ""
 	@echo "All migrations:"
@@ -91,6 +92,9 @@ run-user-service:
 
 run-subscription-service:
 	go run ./services/subscription-service/cmd/subscription-service
+
+run-config-service:
+	go run ./services/config-service/cmd/config-service
 
 run-telegram-service:
 	go run ./services/telegram-service/cmd/telegram-service
