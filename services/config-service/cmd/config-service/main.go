@@ -13,6 +13,7 @@ import (
 	rootpostgres "github.com/Shyyw1e/The-Dark-Twenties/internal/storage/postgres"
 	httpserver "github.com/Shyyw1e/The-Dark-Twenties/internal/transport/http"
 	configpostgres "github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/adapters/postgres"
+	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/adapters/staticnodes"
 	subscriptionclient "github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/clients/subscription"
 	confighttp "github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/transport/http"
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/usecase"
@@ -40,8 +41,19 @@ func main() {
 	}
 	defer subscriptionChecker.Close()
 
+	nodeProvider, err := staticnodes.NewProviderFromJSON(cfg.ConfigService.StaticNodesJSON, staticnodes.DefaultNodes())
+	if err != nil {
+		log.Error("failed to create node provider", "error", err)
+		os.Exit(1)
+	}
+
 	configRepo := configpostgres.NewRepository(db)
-	configUsecase := usecase.NewService(configRepo, subscriptionChecker)
+	configUsecase := usecase.NewService(
+		configRepo,
+		subscriptionChecker,
+		usecase.WithNodeProvider(nodeProvider),
+		usecase.WithMaxProfileNodes(cfg.ConfigService.MaxProfileNodes),
+	)
 	configHandler := confighttp.NewHandler(configUsecase)
 
 	mux := http.NewServeMux()

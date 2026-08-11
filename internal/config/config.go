@@ -67,6 +67,11 @@ type TelegramConfig struct {
 	ConfigServicePublicBaseURL   string
 }
 
+type ConfigServiceConfig struct {
+	StaticNodesJSON string
+	MaxProfileNodes int
+}
+
 type RuntimeConfig struct {
 	MonitorEnabled           bool
 	MonitorInterval          time.Duration
@@ -77,14 +82,15 @@ type RuntimeConfig struct {
 }
 
 type Config struct {
-	App      AppConfig
-	HTTP     HTTPConfig
-	GRPC     GRPCConfig
-	Postgres PostgresConfig
-	Redis    RedisConfig
-	RabbitMQ RabbitMQConfig
-	Telegram TelegramConfig
-	Runtime  RuntimeConfig
+	App           AppConfig
+	HTTP          HTTPConfig
+	GRPC          GRPCConfig
+	Postgres      PostgresConfig
+	Redis         RedisConfig
+	RabbitMQ      RabbitMQConfig
+	Telegram      TelegramConfig
+	ConfigService ConfigServiceConfig
+	Runtime       RuntimeConfig
 }
 
 func MustLoad(serviceName string) *Config {
@@ -104,14 +110,15 @@ func Load(serviceName string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		App:      loadAppConfig(serviceName),
-		HTTP:     loadHTTPConfig(serviceName),
-		GRPC:     loadGRPCConfig(serviceName),
-		Postgres: loadPostgresConfig(serviceName),
-		Redis:    loadRedisConfig(serviceName),
-		RabbitMQ: loadRabbitMQConfig(serviceName),
-		Telegram: loadTelegramConfig(serviceName),
-		Runtime:  loadRuntimeConfig(serviceName),
+		App:           loadAppConfig(serviceName),
+		HTTP:          loadHTTPConfig(serviceName),
+		GRPC:          loadGRPCConfig(serviceName),
+		Postgres:      loadPostgresConfig(serviceName),
+		Redis:         loadRedisConfig(serviceName),
+		RabbitMQ:      loadRabbitMQConfig(serviceName),
+		Telegram:      loadTelegramConfig(serviceName),
+		ConfigService: loadConfigServiceConfig(serviceName),
+		Runtime:       loadRuntimeConfig(serviceName),
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -213,6 +220,13 @@ func loadTelegramConfig(serviceName string) TelegramConfig {
 	}
 }
 
+func loadConfigServiceConfig(serviceName string) ConfigServiceConfig {
+	return ConfigServiceConfig{
+		StaticNodesJSON: getServiceEnv(serviceName, "CONFIG_SERVICE_STATIC_NODES_JSON", ""),
+		MaxProfileNodes: getIntEnv(serviceName, "CONFIG_SERVICE_MAX_PROFILE_NODES", 4),
+	}
+}
+
 func loadRuntimeConfig(serviceName string) RuntimeConfig {
 	return RuntimeConfig{
 		MonitorEnabled:           getBoolEnv(serviceName, "RUNTIME_MONITOR_ENABLED", true),
@@ -270,6 +284,9 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Telegram.PollTimeoutSeconds <= 0 {
 		return errors.New("TELEGRAM_POLL_TIMEOUT_SECONDS must be positive")
+	}
+	if cfg.ConfigService.MaxProfileNodes <= 0 {
+		return errors.New("CONFIG_SERVICE_MAX_PROFILE_NODES must be positive")
 	}
 	if cfg.Runtime.MonitorInterval <= 0 {
 		return errors.New("RUNTIME_MONITOR_INTERVAL must be positive")

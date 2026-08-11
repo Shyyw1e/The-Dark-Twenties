@@ -7,6 +7,28 @@ import (
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/domain"
 )
 
+type NodeSelectionRequest struct {
+	UserID     string
+	ClientType string
+	Format     string
+	MaxNodes   int
+}
+
+type ProfileRenderRequest struct {
+	UserID     string
+	ClientType string
+	Format     string
+	Nodes      []domain.ProxyNode
+}
+
+type RenderedProfile struct {
+	Content     string
+	Format      string
+	ServerCount int
+	NodeRefs    string
+	Metadata    string
+}
+
 type Repository interface {
 	FindTokenByHash(ctx context.Context, tokenHash string) (*domain.SubscriptionToken, error)
 	FindActiveTokenByUserID(ctx context.Context, userID string, clientType string, format string, now time.Time) (*domain.SubscriptionToken, error)
@@ -19,4 +41,12 @@ type Repository interface {
 
 type SubscriptionChecker interface {
 	HasActiveSubscription(ctx context.Context, userID string, at time.Time) error
+}
+
+type NodeProvider interface {
+	SelectNodes(ctx context.Context, request NodeSelectionRequest) ([]domain.ProxyNode, error)
+}
+
+type ProfileRenderer interface {
+	RenderProfile(ctx context.Context, request ProfileRenderRequest) (*RenderedProfile, error)
 }

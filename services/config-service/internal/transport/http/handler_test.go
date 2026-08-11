@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/domain"
+	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/ports"
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/usecase"
 )
 
@@ -74,8 +75,27 @@ func (r *fakeRepository) CreateRefreshEvent(ctx context.Context, event *domain.R
 	return nil
 }
 
+type fakeNodeProvider struct{}
+
+func (p fakeNodeProvider) SelectNodes(ctx context.Context, request ports.NodeSelectionRequest) ([]domain.ProxyNode, error) {
+	return []domain.ProxyNode{
+		{
+			ID:         "node-1",
+			Address:    "node-1.example.invalid",
+			Port:       443,
+			Protocol:   "vless",
+			UserID:     "00000000-0000-4000-8000-000000000001",
+			Network:    "xhttp",
+			Security:   "reality",
+			PublicKey:  "public-key",
+			ServerName: "example.com",
+			ShortID:    "short-id",
+		},
+	}, nil
+}
+
 func TestProvisionSubscription(t *testing.T) {
-	handler := NewHandler(usecase.NewService(&fakeRepository{}, nil))
+	handler := NewHandler(usecase.NewService(&fakeRepository{}, nil, usecase.WithNodeProvider(fakeNodeProvider{})))
 	expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
 	body := bytes.NewBufferString(`{"user_id":"user-1","subscription_id":"subscription-1","expires_at":"` + expiresAt + `","public_base_url":"https://vpn.example.com"}`)
 	req := httptest.NewRequest(http.MethodPost, "/internal/configs/subscription/provision", body)

@@ -322,7 +322,7 @@ func (s *Service) provisionSubscriptionConfig(ctx context.Context, userID string
 		UserID:       userID,
 		Subscription: subscription,
 		ClientType:   "happ",
-		Format:       "sing-box",
+		Format:       "xray-json",
 	})
 	if err != nil {
 		return "", err

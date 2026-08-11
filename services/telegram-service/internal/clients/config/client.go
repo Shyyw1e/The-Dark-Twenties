@@ -81,7 +81,7 @@ func (c *Client) ProvisionSubscription(ctx context.Context, input ProvisionSubsc
 		SubscriptionID: strings.TrimSpace(input.Subscription.GetId()),
 		ExpiresAt:      input.Subscription.GetExpiresAt().AsTime(),
 		ClientType:     normalizeDefault(input.ClientType, "happ"),
-		Format:         normalizeDefault(input.Format, "sing-box"),
+		Format:         normalizeDefault(input.Format, "xray-json"),
 		PublicBaseURL:  c.publicBaseURL,
 	}
 

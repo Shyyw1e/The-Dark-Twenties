@@ -12,14 +12,20 @@ import (
 
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/domain"
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/ports"
+	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/profile/xray"
 )
 
 type Service struct {
 	repository            ports.Repository
 	subscriptionChecker   ports.SubscriptionChecker
+	nodeProvider          ports.NodeProvider
+	profileRenderer       ports.ProfileRenderer
+	maxProfileNodes       int
 	now                   func() time.Time
 	hashSubscriptionToken func(token string) string
 }
+
+type ServiceOption func(*Service)
 
 type RefreshSubscriptionInput struct {
 	Token     string
@@ -52,12 +58,40 @@ type ProvisionSubscriptionOutput struct {
 	ExpiresAt       time.Time
 }
 
-func NewService(repository ports.Repository, subscriptionChecker ports.SubscriptionChecker) *Service {
-	return &Service{
+func NewService(repository ports.Repository, subscriptionChecker ports.SubscriptionChecker, opts ...ServiceOption) *Service {
+	service := &Service{
 		repository:            repository,
 		subscriptionChecker:   subscriptionChecker,
+		profileRenderer:       xray.NewRenderer(),
+		maxProfileNodes:       4,
 		now:                   func() time.Time { return time.Now().UTC() },
 		hashSubscriptionToken: HashSubscriptionToken,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service
+}
+
+func WithNodeProvider(nodeProvider ports.NodeProvider) ServiceOption {
+	return func(s *Service) {
+		s.nodeProvider = nodeProvider
+	}
+}
+
+func WithProfileRenderer(profileRenderer ports.ProfileRenderer) ServiceOption {
+	return func(s *Service) {
+		s.profileRenderer = profileRenderer
+	}
+}
+
+func WithMaxProfileNodes(maxProfileNodes int) ServiceOption {
+	return func(s *Service) {
+		if maxProfileNodes > 0 {
+			s.maxProfileNodes = maxProfileNodes
+		}
 	}
 }
 
@@ -84,7 +118,7 @@ func (s *Service) ProvisionSubscription(ctx context.Context, input ProvisionSubs
 	}
 
 	clientType := normalizeDefault(input.ClientType, "happ")
-	format := normalizeDefault(input.Format, "sing-box")
+	format := normalizeDefault(input.Format, xray.Format)
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(input.PublicBaseURL), "/")
 	if publicBaseURL == "" {
 		return nil, errors.New("public_base_url is required")
@@ -108,7 +142,10 @@ func (s *Service) ProvisionSubscription(ctx context.Context, input ProvisionSubs
 		return nil, err
 	}
 	if profile == nil || errors.Is(err, domain.ErrConfigProfileNotFound) || createdToken {
-		profile = newConfigProfile(token.ID, clientType, format, expiresAt, now)
+		profile, err = s.newConfigProfile(ctx, userID, token.ID, clientType, format, expiresAt, now)
+		if err != nil {
+			return nil, err
+		}
 		if err := s.repository.CreateConfigProfile(ctx, profile); err != nil {
 			return nil, err
 		}
@@ -203,6 +240,9 @@ func (s *Service) validate() error {
 	if s.hashSubscriptionToken == nil {
 		return errors.New("subscription token hasher is nil")
 	}
+	if s.profileRenderer == nil {
+		return errors.New("profile renderer is nil")
+	}
 	return nil
 }
 
@@ -233,57 +273,61 @@ func newSubscriptionToken(userID string, subscriptionID string, clientType strin
 	}
 }
 
-func newConfigProfile(tokenID string, clientType string, format string, expiresAt time.Time, now time.Time) *domain.ConfigProfile {
-	content := buildProfileContent(clientType, format)
+func (s *Service) newConfigProfile(ctx context.Context, userID string, tokenID string, clientType string, format string, expiresAt time.Time, now time.Time) (*domain.ConfigProfile, error) {
+	nodes, err := s.selectNodes(ctx, userID, clientType, format)
+	if err != nil {
+		return nil, err
+	}
+
+	rendered, err := s.profileRenderer.RenderProfile(ctx, ports.ProfileRenderRequest{
+		UserID:     userID,
+		ClientType: clientType,
+		Format:     format,
+		Nodes:      nodes,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &domain.ConfigProfile{
 		ID:                  uuid.NewString(),
 		SubscriptionTokenID: tokenID,
 		ProfileVersion:      1,
 		ClientType:          clientType,
-		Format:              format,
-		ServerCount:         0,
-		Content:             content,
-		ContentHash:         HashContent(content),
-		NodeRefs:            "[]",
-		Metadata:            `{"source":"config-service","profile_kind":"base"}`,
+		Format:              rendered.Format,
+		ServerCount:         rendered.ServerCount,
+		Content:             rendered.Content,
+		ContentHash:         HashContent(rendered.Content),
+		NodeRefs:            rendered.NodeRefs,
+		Metadata:            rendered.Metadata,
 		GeneratedAt:         now,
 		ExpiresAt:           &expiresAt,
-	}
+	}, nil
 }
 
-func buildProfileContent(clientType string, format string) string {
-	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "sing-box":
-		return strings.Join([]string{
-			`{`,
-			`  "log": { "level": "info" },`,
-			`  "dns": {`,
-			`    "servers": [`,
-			`      { "tag": "cloudflare", "address": "1.1.1.1" },`,
-			`      { "tag": "google", "address": "8.8.8.8" }`,
-			`    ],`,
-			`    "strategy": "ipv4_only"`,
-			`  },`,
-			`  "inbounds": [`,
-			`    { "type": "tun", "tag": "tun-in", "interface_name": "tdt0", "inet4_address": "172.19.0.1/30", "auto_route": true, "strict_route": false, "sniff": true }`,
-			`  ],`,
-			`  "outbounds": [`,
-			`    { "type": "selector", "tag": "proxy", "outbounds": ["direct"], "default": "direct" },`,
-			`    { "type": "direct", "tag": "direct" },`,
-			`    { "type": "block", "tag": "block" }`,
-			`  ],`,
-			`  "route": {`,
-			`    "rules": [`,
-			`      { "protocol": "bittorrent", "outbound": "block" },`,
-			`      { "domain_suffix": [".ru", ".su", ".рф"], "outbound": "direct" }`,
-			`    ],`,
-			`    "final": "proxy"`,
-			`  }`,
-			`}`,
-		}, "\n")
-	default:
-		return "# The Dark Twenties subscription\n"
+func (s *Service) selectNodes(ctx context.Context, userID string, clientType string, format string) ([]domain.ProxyNode, error) {
+	if s.nodeProvider == nil {
+		return nil, errors.New("node provider is nil")
 	}
+
+	nodes, err := s.nodeProvider.SelectNodes(ctx, ports.NodeSelectionRequest{
+		UserID:     userID,
+		ClientType: clientType,
+		Format:     format,
+		MaxNodes:   s.maxProfileNodes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("no proxy nodes available")
+	}
+	for _, node := range nodes {
+		if err := node.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return nodes, nil
 }
 
 func hashOptional(value string) string {
@@ -304,7 +348,7 @@ func normalizeDefault(value string, def string) string {
 
 func contentTypeForFormat(format string) string {
 	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "json", "sing-box":
+	case "json", "sing-box", xray.Format:
 		return "application/json; charset=utf-8"
 	case "uri-list", "":
 		return "text/plain; charset=utf-8"

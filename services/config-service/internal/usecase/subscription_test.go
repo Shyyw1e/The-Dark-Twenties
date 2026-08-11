@@ -3,10 +3,12 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/domain"
+	"github.com/Shyyw1e/The-Dark-Twenties/services/config-service/internal/ports"
 )
 
 type fakeRepository struct {
@@ -124,6 +126,47 @@ func (c *fakeSubscriptionChecker) HasActiveSubscription(ctx context.Context, use
 	return c.err
 }
 
+type fakeNodeProvider struct {
+	nodes []domain.ProxyNode
+	err   error
+}
+
+func (p fakeNodeProvider) SelectNodes(ctx context.Context, request ports.NodeSelectionRequest) ([]domain.ProxyNode, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	limit := request.MaxNodes
+	if limit <= 0 || limit > len(p.nodes) {
+		limit = len(p.nodes)
+	}
+	nodes := make([]domain.ProxyNode, 0, limit)
+	nodes = append(nodes, p.nodes[:limit]...)
+	return nodes, nil
+}
+
+func testProxyNode(id string) domain.ProxyNode {
+	return domain.ProxyNode{
+		ID:          id,
+		Name:        id,
+		Region:      "eu-west",
+		Country:     "NL",
+		Role:        domain.NodeRoleForeignExit,
+		Address:     id + ".example.invalid",
+		Port:        443,
+		Protocol:    "vless",
+		UserID:      "00000000-0000-4000-8000-000000000001",
+		Network:     "xhttp",
+		Security:    "reality",
+		Fingerprint: "chrome",
+		PublicKey:   "public-key",
+		ServerName:  "example.com",
+		ShortID:     "short-id",
+		SpiderX:     "/",
+		XHTTPMode:   "stream-one",
+		XHTTPPath:   "/api/v1/update",
+	}
+}
+
 func TestRefreshSubscriptionReturnsLatestProfileAndWritesAudit(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
@@ -189,7 +232,7 @@ func TestProvisionSubscriptionCreatesTokenAndProfile(t *testing.T) {
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(7 * 24 * time.Hour)
 	repo := newFakeRepository()
-	service := NewService(repo, nil)
+	service := NewService(repo, nil, WithNodeProvider(fakeNodeProvider{nodes: []domain.ProxyNode{testProxyNode("node-1"), testProxyNode("node-2")}}))
 	service.now = func() time.Time { return now }
 
 	output, err := service.ProvisionSubscription(context.Background(), ProvisionSubscriptionInput{
@@ -222,8 +265,11 @@ func TestProvisionSubscriptionCreatesTokenAndProfile(t *testing.T) {
 	if output.SubscriptionURL != "https://vpn.example.com/sub/"+token.ID {
 		t.Fatalf("subscription url = %q", output.SubscriptionURL)
 	}
-	if output.ClientType != "happ" || output.Format != "sing-box" {
+	if output.ClientType != "happ" || output.Format != "xray-json" {
 		t.Fatalf("output = %+v", output)
+	}
+	if profile.ServerCount != 2 || !strings.Contains(profile.Content, `"protocol": "vless"`) || !strings.Contains(profile.Content, `"burstObservatory"`) {
+		t.Fatalf("profile content = %s", profile.Content)
 	}
 }
 
@@ -236,14 +282,14 @@ func TestProvisionSubscriptionReusesActiveToken(t *testing.T) {
 		UserID:     "user-1",
 		Status:     domain.TokenStatusActive,
 		ClientType: "happ",
-		Format:     "sing-box",
+		Format:     "xray-json",
 	}
 	repo.profileByID["token-1"] = &domain.ConfigProfile{
 		ID:                  "profile-1",
 		SubscriptionTokenID: "token-1",
 		ProfileVersion:      2,
 		ClientType:          "happ",
-		Format:              "sing-box",
+		Format:              "xray-json",
 		Content:             `{"route":{}}`,
 	}
 	service := NewService(repo, nil)
